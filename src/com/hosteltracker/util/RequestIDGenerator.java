@@ -18,5 +18,11 @@ public class RequestIDGenerator {
     public synchronized int nextId() {
         return ++currentId;
     }
+
+    public synchronized void ensureAtLeast(int existingMaxId) {
+        if (existingMaxId > currentId) {
+            currentId = existingMaxId;
+        }
+    }
 }
 

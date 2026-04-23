@@ -8,11 +8,13 @@ import com.hosteltracker.model.request.ElectricalRequest;
 import com.hosteltracker.model.request.PlumbingRequest;
 import com.hosteltracker.model.request.Request;
 import com.hosteltracker.model.user.MaintenanceStaff;
+import com.hosteltracker.util.RequestIDGenerator;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -34,6 +36,7 @@ public class MaintenanceService {
     public MaintenanceService() {
         initializeFiles();
         seedDefaultStaff();
+        synchronizeRequestIdGenerator();
     }
 
     public Request createRequest(String roomNumber, String category, String description, String photoPath)
@@ -187,6 +190,8 @@ public class MaintenanceService {
                     writer.newLine();
                 }
             }
+            removeBlankLines(requestLogFile);
+            removeBlankLines(ratingLogFile);
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize CSV files.", e);
         }
@@ -205,9 +210,28 @@ public class MaintenanceService {
         if (request.getRating() == null) {
             return;
         }
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(ratingLogFile, true))) {
-            writer.write(request.getRequestId() + "," + request.getCategory() + "," + request.getRating());
-            writer.newLine();
+        String newEntry = request.getRequestId() + "," + request.getCategory() + "," + request.getRating();
+        try {
+            List<String> lines = ratingLogFile.exists()
+                    ? Files.readAllLines(ratingLogFile.toPath())
+                    : new ArrayList<>();
+            if (lines.isEmpty()) {
+                lines.add("RequestID,Category,Rating");
+            }
+            List<String> filtered = new ArrayList<>();
+            filtered.add(lines.get(0));
+            String requestPrefix = request.getRequestId() + ",";
+            for (int i = 1; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                if (!line.startsWith(requestPrefix)) {
+                    filtered.add(line);
+                }
+            }
+            filtered.add(newEntry);
+            Files.write(ratingLogFile.toPath(), filtered);
         } catch (IOException e) {
             throw new RuntimeException("Failed to write rating log.", e);
         }
@@ -246,6 +270,56 @@ public class MaintenanceService {
             }
         }
         return true;
+    }
+
+    private void removeBlankLines(File file) throws IOException {
+        if (!file.exists()) {
+            return;
+        }
+        List<String> lines = Files.readAllLines(file.toPath());
+        if (lines.isEmpty()) {
+            return;
+        }
+        List<String> cleaned = new ArrayList<>();
+        cleaned.add(lines.get(0));
+        for (int i = 1; i < lines.size(); i++) {
+            String line = lines.get(i).trim();
+            if (!line.isEmpty()) {
+                cleaned.add(line);
+            }
+        }
+        Files.write(file.toPath(), cleaned);
+    }
+
+    private void synchronizeRequestIdGenerator() {
+        if (!requestLogFile.exists()) {
+            return;
+        }
+        try {
+            List<String> lines = Files.readAllLines(requestLogFile.toPath());
+            int maxId = 1000;
+            for (int i = 1; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+                String[] parts = line.split(",");
+                if (parts.length == 0) {
+                    continue;
+                }
+                try {
+                    int id = Integer.parseInt(parts[0].trim());
+                    if (id > maxId) {
+                        maxId = id;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // Ignore malformed lines and keep service running.
+                }
+            }
+            RequestIDGenerator.getInstance().ensureAtLeast(maxId);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to sync request ID generator from CSV.", e);
+        }
     }
 }
 
