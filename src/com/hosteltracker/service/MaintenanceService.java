@@ -7,6 +7,7 @@ import com.hosteltracker.model.request.CarpentryRequest;
 import com.hosteltracker.model.request.ElectricalRequest;
 import com.hosteltracker.model.request.PlumbingRequest;
 import com.hosteltracker.model.request.Request;
+import com.hosteltracker.model.user.MaintenanceStaff;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -23,6 +24,7 @@ import java.util.Set;
 
 public class MaintenanceService {
     private final List<Request> requests = new ArrayList<>();
+    private final List<MaintenanceStaff> maintenanceStaffMembers = new ArrayList<>();
     private final Set<String> openRooms = new HashSet<>();
     private final Map<Integer, Request> requestLookup = new HashMap<>();
     private final File dataDirectory = new File("data");
@@ -31,6 +33,7 @@ public class MaintenanceService {
 
     public MaintenanceService() {
         initializeFiles();
+        seedDefaultStaff();
     }
 
     public Request createRequest(String roomNumber, String category, String description, String photoPath)
@@ -64,8 +67,52 @@ public class MaintenanceService {
         if (request.getStatus() == RequestStatus.COMPLETED) {
             throw new IllegalStateException("Cannot assign a completed request.");
         }
+        if (staffName == null || staffName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Please select a maintenance worker.");
+        }
+        MaintenanceStaff staff = findStaffByName(staffName);
+        if (staff == null) {
+            throw new IllegalArgumentException("Selected maintenance worker is not registered.");
+        }
+        if (!isStaffAvailableForRequest(staff, request)) {
+            throw new IllegalStateException("Selected worker already has an active task.");
+        }
         request.assignTo(staffName);
         appendRequestToCsv(request);
+    }
+
+    public void addMaintenanceStaff(String userId, String name, String specialty) {
+        if (userId == null || userId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Employee ID is required.");
+        }
+        if (name == null || name.trim().isEmpty()) {
+            throw new IllegalArgumentException("Employee name is required.");
+        }
+        if (specialty == null || specialty.trim().isEmpty()) {
+            throw new IllegalArgumentException("Specialty is required.");
+        }
+        for (MaintenanceStaff staff : maintenanceStaffMembers) {
+            if (staff.getUserId().equalsIgnoreCase(userId.trim())) {
+                throw new IllegalArgumentException("Employee ID already exists.");
+            }
+        }
+        maintenanceStaffMembers.add(new MaintenanceStaff(userId.trim(), name.trim(), specialty.trim()));
+    }
+
+    public List<MaintenanceStaff> getAllMaintenanceStaff() {
+        return new ArrayList<>(maintenanceStaffMembers);
+    }
+
+    public List<MaintenanceStaff> getAvailableStaffForRequest(int requestId) {
+        Request request = getRequestByIdOrThrow(requestId);
+        List<MaintenanceStaff> available = new ArrayList<>();
+        for (MaintenanceStaff staff : maintenanceStaffMembers) {
+            if (isStaffSuitableForCategory(staff, request.getCategory())
+                    && isStaffAvailableForRequest(staff, request)) {
+                available.add(staff);
+            }
+        }
+        return available;
     }
 
     public void updateRequestStatus(int requestId, RequestStatus newStatus) {
@@ -164,6 +211,41 @@ public class MaintenanceService {
         } catch (IOException e) {
             throw new RuntimeException("Failed to write rating log.", e);
         }
+    }
+
+    private void seedDefaultStaff() {
+        maintenanceStaffMembers.add(new MaintenanceStaff("EMP-101", "Ravi Kumar", "plumbing"));
+        maintenanceStaffMembers.add(new MaintenanceStaff("EMP-102", "Anita Das", "electrical"));
+        maintenanceStaffMembers.add(new MaintenanceStaff("EMP-103", "Suresh Patel", "carpentry"));
+    }
+
+    private MaintenanceStaff findStaffByName(String name) {
+        for (MaintenanceStaff staff : maintenanceStaffMembers) {
+            if (staff.getName().equalsIgnoreCase(name.trim())) {
+                return staff;
+            }
+        }
+        return null;
+    }
+
+    private boolean isStaffSuitableForCategory(MaintenanceStaff staff, String category) {
+        return staff.getSpecialty().equalsIgnoreCase(category)
+                || "all".equalsIgnoreCase(staff.getSpecialty())
+                || "general".equalsIgnoreCase(staff.getSpecialty());
+    }
+
+    private boolean isStaffAvailableForRequest(MaintenanceStaff staff, Request targetRequest) {
+        for (Request request : requests) {
+            if (request.getRequestId() == targetRequest.getRequestId()) {
+                continue;
+            }
+            if (request.getStatus() != RequestStatus.COMPLETED
+                    && request.getAssignedTo() != null
+                    && request.getAssignedTo().equalsIgnoreCase(staff.getName())) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 

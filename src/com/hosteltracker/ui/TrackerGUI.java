@@ -2,6 +2,7 @@ package com.hosteltracker.ui;
 
 import com.hosteltracker.model.enums.RequestStatus;
 import com.hosteltracker.model.request.Request;
+import com.hosteltracker.model.user.MaintenanceStaff;
 import com.hosteltracker.service.MaintenanceService;
 
 import javax.swing.BorderFactory;
@@ -39,6 +40,7 @@ public class TrackerGUI extends JFrame {
     private DefaultTableModel studentTableModel;
     private DefaultTableModel wardenTableModel;
     private DefaultTableModel workerTaskTableModel;
+    private DefaultTableModel staffTableModel;
 
     private final JTextField roomField = new JTextField();
     private final JComboBox<String> categoryBox = new JComboBox<>(new String[]{"plumbing", "electrical", "carpentry"});
@@ -49,7 +51,12 @@ public class TrackerGUI extends JFrame {
     private final JTextArea trackResultArea = new JTextArea();
 
     private final JTextField assignIdField = new JTextField();
-    private final JTextField staffNameField = new JTextField();
+    private final JComboBox<String> availableStaffBox = new JComboBox<>();
+
+    private final JTextField employeeIdField = new JTextField();
+    private final JTextField employeeNameField = new JTextField();
+    private final JComboBox<String> employeeSpecialtyBox =
+            new JComboBox<>(new String[]{"plumbing", "electrical", "carpentry", "general"});
 
     private final JTextField statusIdField = new JTextField();
     private final JComboBox<RequestStatus> statusBox = new JComboBox<>(RequestStatus.values());
@@ -101,6 +108,7 @@ public class TrackerGUI extends JFrame {
         JPanel container = new JPanel(new BorderLayout());
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Warden Assignment", buildAssignPanel());
+        tabs.addTab("Manage Employees", buildEmployeeManagementPanel());
         tabs.addTab("All Requests", buildWardenTablePanel());
         tabs.addTab("Analytics", buildAnalyticsPanel());
         container.add(tabs, BorderLayout.CENTER);
@@ -168,18 +176,47 @@ public class TrackerGUI extends JFrame {
     }
 
     private JPanel buildAssignPanel() {
-        JPanel panel = new JPanel(new GridLayout(3, 2, 8, 8));
+        JPanel panel = new JPanel(new GridLayout(4, 2, 8, 8));
         panel.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
 
         panel.add(new JLabel("Request ID"));
         panel.add(assignIdField);
-        panel.add(new JLabel("Assign to staff"));
-        panel.add(staffNameField);
+        panel.add(new JLabel("Available workers"));
+        panel.add(availableStaffBox);
+
+        JButton loadAvailableButton = new JButton("Load Available Workers");
+        loadAvailableButton.addActionListener(e -> refreshAvailableStaffDropdown());
+        panel.add(new JLabel(""));
+        panel.add(loadAvailableButton);
 
         JButton assignButton = new JButton("Assign Request");
         assignButton.addActionListener(e -> assignRequest());
         panel.add(new JLabel(""));
         panel.add(assignButton);
+        return panel;
+    }
+
+    private JPanel buildEmployeeManagementPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+
+        JPanel form = new JPanel(new GridLayout(4, 2, 8, 8));
+        form.setBorder(BorderFactory.createEmptyBorder(16, 16, 16, 16));
+        form.add(new JLabel("Employee ID"));
+        form.add(employeeIdField);
+        form.add(new JLabel("Employee Name"));
+        form.add(employeeNameField);
+        form.add(new JLabel("Specialty"));
+        form.add(employeeSpecialtyBox);
+        JButton addButton = new JButton("Add Employee");
+        addButton.addActionListener(e -> addEmployee());
+        form.add(new JLabel(""));
+        form.add(addButton);
+        panel.add(form, BorderLayout.NORTH);
+
+        String[] columns = {"Employee ID", "Name", "Specialty"};
+        staffTableModel = createReadOnlyModel(columns);
+        JTable table = new JTable(staffTableModel);
+        panel.add(new JScrollPane(table), BorderLayout.CENTER);
         return panel;
     }
 
@@ -332,8 +369,25 @@ public class TrackerGUI extends JFrame {
     private void assignRequest() {
         try {
             int requestId = Integer.parseInt(assignIdField.getText().trim());
-            service.assignRequest(requestId, staffNameField.getText().trim());
+            String selectedStaff = String.valueOf(availableStaffBox.getSelectedItem());
+            String staffName = extractStaffNameFromSelection(selectedStaff);
+            service.assignRequest(requestId, staffName);
             JOptionPane.showMessageDialog(this, "Request assigned.");
+            refreshAllViews();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void addEmployee() {
+        try {
+            service.addMaintenanceStaff(
+                    employeeIdField.getText().trim(),
+                    employeeNameField.getText().trim(),
+                    String.valueOf(employeeSpecialtyBox.getSelectedItem()));
+            JOptionPane.showMessageDialog(this, "Employee added.");
+            employeeIdField.setText("");
+            employeeNameField.setText("");
             refreshAllViews();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -370,6 +424,8 @@ public class TrackerGUI extends JFrame {
         refreshWardenTable(all);
         refreshWorkerTasks(all);
         refreshCompletedRequestOptions(all);
+        refreshStaffTable();
+        refreshAvailableStaffDropdown();
         refreshAnalytics();
     }
 
@@ -429,6 +485,43 @@ public class TrackerGUI extends JFrame {
         }
         text.append("</html>");
         analyticsLabel.setText(text.toString());
+    }
+
+    private void refreshStaffTable() {
+        if (staffTableModel == null) {
+            return;
+        }
+        staffTableModel.setRowCount(0);
+        List<MaintenanceStaff> allStaff = service.getAllMaintenanceStaff();
+        for (MaintenanceStaff staff : allStaff) {
+            staffTableModel.addRow(new Object[]{
+                    staff.getUserId(),
+                    staff.getName(),
+                    staff.getSpecialty()
+            });
+        }
+    }
+
+    private void refreshAvailableStaffDropdown() {
+        availableStaffBox.removeAllItems();
+        String requestIdText = assignIdField.getText().trim();
+        if (requestIdText.isEmpty()) {
+            availableStaffBox.addItem("Enter request ID first");
+            return;
+        }
+        try {
+            int requestId = Integer.parseInt(requestIdText);
+            List<MaintenanceStaff> availableStaff = service.getAvailableStaffForRequest(requestId);
+            if (availableStaff.isEmpty()) {
+                availableStaffBox.addItem("No available workers for this request");
+                return;
+            }
+            for (MaintenanceStaff staff : availableStaff) {
+                availableStaffBox.addItem(staff.getName() + " (" + staff.getUserId() + ") - " + staff.getSpecialty());
+            }
+        } catch (Exception ex) {
+            availableStaffBox.addItem("Invalid request ID");
+        }
     }
 
     private void initializeRepairOptions() {
@@ -519,6 +612,21 @@ public class TrackerGUI extends JFrame {
         }
         String idPart = parts[0].trim().replace("ID ", "");
         return Integer.parseInt(idPart);
+    }
+
+    private String extractStaffNameFromSelection(String selection) {
+        if (selection == null
+                || selection.trim().isEmpty()
+                || selection.startsWith("Enter request ID")
+                || selection.startsWith("No available workers")
+                || selection.startsWith("Invalid request ID")) {
+            throw new IllegalArgumentException("Select a valid available worker.");
+        }
+        int bracketStart = selection.indexOf(" (");
+        if (bracketStart <= 0) {
+            throw new IllegalArgumentException("Invalid staff selection.");
+        }
+        return selection.substring(0, bracketStart).trim();
     }
 
     public static void launch() {
